@@ -1,0 +1,151 @@
+<#
+.SYNOPSIS
+    Exchange Server Daily Health Check
+.DESCRIPTION
+    Optimized local health check on an individual Exchange Server with an integrated mailflow test.
+.NOTES
+    Must be executed from an elevated Exchange Management Shell session.
+#>
+
+if (-not (Get-Command Get-ExchangeServer -ErrorAction SilentlyContinue)) {
+    Add-PSSnapin *Exchange* -ErrorAction SilentlyContinue
+}
+
+$TargetServer = (Get-ExchangeServer -Identity $env:COMPUTERNAME -ErrorAction Stop).Name
+$MinPercent   = 20 # Available free space threshhold
+
+function Get-FreeSpacePercent {
+    param ([string]$DriveLetter)
+    $Drive = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$DriveLetter'" -ErrorAction SilentlyContinue
+    if ($null -eq $Drive) { return $null }
+    return [math]::Round(($Drive.FreeSpace / $Drive.Size) * 100, 2)
+}
+
+# --- Disk Space Check ---
+Write-Host "`n=== Disk Space Check ===" -ForegroundColor Cyan
+
+# Check C: Drive
+$CPercent = Get-FreeSpacePercent -DriveLetter "C:"
+if ($null -ne $CPercent) {
+    if ($CPercent -lt $MinPercent) {
+        Write-Host "C: drive has only $CPercent% free space! Minimum required is $MinPercent%." -ForegroundColor Red
+        Write-Host "
+        Please run this command: 
+        Irm https://raw.githubusercontent.com/ITR-MITHO/Microsoft-Exchange/refs/heads/main/Exchange_RemoveLogs.ps1 | iex" -ForegroundColor Yellow
+    } else {
+        Write-Host "C: drive space: OK ($CPercent%)" -ForegroundColor Green
+    }
+}
+$DrivesToCheck = [System.Collections.Generic.HashSet[string]]::new()
+Get-MailboxDatabase -Server $TargetServer -Status -ErrorAction SilentlyContinue | ForEach-Object {
+    if ($_.EdbFilePath.PathName -match '^([A-Za-z]:)') { [void]$DrivesToCheck.Add($Matches[1]) }
+    if ($_.LogFolderPath.PathName -match '^([A-Za-z]:)') { [void]$DrivesToCheck.Add($Matches[1]) }
+}
+
+foreach ($Drive in $DrivesToCheck) {
+    if ($Drive -eq 'C:') { continue }
+    $Percent = Get-FreeSpacePercent -DriveLetter $Drive
+    if ($null -ne $Percent) {
+        if ($Percent -lt $MinPercent) {
+            Write-Host "$Drive drive has only $Percent% free space! Threshold is $MinPercent%." -ForegroundColor Red
+        } else {
+            Write-Host "$Drive drive space: OK ($Percent%)" -ForegroundColor Green
+        }
+    }
+}
+
+
+# --- Check message queue ---
+Write-Host "`n=== Message Queue ===" -ForegroundColor Cyan
+try {
+    $QueueCount = (Get-Queue -Server $TargetServer -ErrorAction Stop | Measure-Object -Property MessageCount -Sum).Sum
+    if ($QueueCount -gt 100) {
+        Write-Host "Warning: $QueueCount messages in local queues." -ForegroundColor Red
+    } else {
+        Write-Host "Local message queue count: OK ($QueueCount)" -ForegroundColor Green
+    }
+} catch {
+    Write-Warning "Unable to calculate local message queue count: $_"
+}
+
+# --- Check component states ---
+Write-Host "`n=== Component States ===" -ForegroundColor Cyan
+$Components = Get-ServerComponentState -Identity $TargetServer |
+    Where-Object { $_.Component -notin @("ForwardSyncDaemon", "ProvisioningRps") }
+
+$Inactive = $Components | Where-Object { $_.State -eq "Inactive" }
+if ($Inactive) {
+    Write-Host "Inactive Exchange components detected:" -ForegroundColor Red
+    $Inactive | Select-Object Component, State, Requester | Format-Table -AutoSize
+} else {
+    Write-Host "All Exchange components active." -ForegroundColor Green
+}
+
+# --- Check Exchange services ---
+Write-Host "`n=== Exchange Services ===" -ForegroundColor Cyan
+$ServiceHealth = Test-ServiceHealth -Server $TargetServer -ErrorAction SilentlyContinue
+$Missing = $ServiceHealth | Where-Object { $_.RequiredServicesRunning -ne $true }
+if ($Missing) {
+    Write-Host "Some required Exchange services are not running:" -ForegroundColor Red
+    $Missing | Select-Object Role, RequiredServicesRunning | Format-Table -AutoSize
+} else {
+    Write-Host "All required Exchange services are running." -ForegroundColor Green
+}
+
+
+# --- Database Mount & Copy Status ---
+Write-Host "`n=== Database Status ===" -ForegroundColor Cyan
+
+try {
+    $Databases = Get-MailboxDatabase -Server $TargetServer -Status -ErrorAction Stop
+    $DbFailures = 0
+    foreach ($Db in $Databases) {
+        $IsDagDb = $Db.MasterServerOrAvailabilityGroup.Name -ne $TargetServer
+
+        if (-not $IsDagDb) {
+            if (-not $Db.Mounted) {
+                Write-Host "CRITICAL: Standalone database [$($Db.Name)] is UNMOUNTED!" -ForegroundColor Red
+                $DbFailures++
+            } else {
+                Write-Host "Database [$($Db.Name)]: Mounted (Standalone)" -ForegroundColor Green
+            }
+        } else {
+            $MdbCopyStatus = Get-MailboxDatabaseCopyStatus -Identity "$($Db.Name)\$TargetServer" -ErrorAction SilentlyContinue
+
+            if ($MdbCopyStatus.Status -eq "Mounted") {
+                Write-Host "Database [$($Db.Name)]: Mounted (Active Copy on this server)" -ForegroundColor Green
+            } elseif ($MdbCopyStatus.Status -eq "Healthy") {
+                Write-Host "Database [$($Db.Name)]: Healthy (Passive Copy)" -ForegroundColor Green
+            } else {
+                Write-Host "CRITICAL: Database [$($Db.Name)] copy status is [$($MdbCopyStatus.Status)] on this server!" -ForegroundColor Red
+                $DbFailures++
+            }
+        }
+    }
+
+    if ($DbFailures -eq 0) {
+        Write-Host "All databases are in their expected state." -ForegroundColor Green
+    }
+
+} catch {
+    Write-Warning "Unable to retrieve database status: $_"
+}
+
+# --- DAG replication ---
+Write-Host "`n=== DAG Replication Health ===" -ForegroundColor Cyan
+
+$dag = Get-DatabaseAvailabilityGroup -ErrorAction SilentlyContinue | Where-Object { $_.Servers -match $env:COMPUTERNAME }
+
+if ($dag) {
+    $dagResults = Test-ReplicationHealth -Identity $env:COMPUTERNAME | Where-Object { $_.Result -like "*Failed*" }
+    
+    if ($dagResults) {
+        Write-Host "DAG replication health issues found:" -ForegroundColor Red
+        $dagResults | Select-Object Server, Check, Result | Format-Table -AutoSize
+    } else {
+        Write-Host "DAG replication: OK" -ForegroundColor Green
+    }
+} else {
+    Write-Host "No DAG found containing this server. Skipping DAG replication check." -ForegroundColor Yellow
+}
+Write-Host "`nHealth check completed for $TargetServer at $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" -ForegroundColor Cyan

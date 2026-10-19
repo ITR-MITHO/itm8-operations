@@ -11,6 +11,14 @@ if (-not (Get-Command Get-ExchangeServer -ErrorAction SilentlyContinue)) {
     Add-PSSnapin *Exchange* -ErrorAction SilentlyContinue
 }
 
+$s = Get-Service -Name "ir_agent" -ErrorAction SilentlyContinue; if ($s) 
+    {
+Set-Service -Name $s.Name -StartupType Automatic; if ($s.Status -ne 'Running') 
+    {
+Start-Service -Name $s.Name; $s.WaitForStatus('Running', '00:00:30')
+        }
+            }
+
 $TargetServer = (Get-ExchangeServer -Identity $env:COMPUTERNAME -ErrorAction Stop).Name
 $MinPercent   = 20 # Available free space threshhold
 

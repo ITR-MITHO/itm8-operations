@@ -1,6 +1,6 @@
-$url = "https://download.microsoft.com/download/ff69247e-f90f-495d-a846-0de5527f3849/ExchangeSubscriptionEdition-KB5128895-x64-en.exe"
+$FileName = "ExchangeSubscriptionEdition-KB5128895-x64-en.exe"
+$url = "https://download.microsoft.com/download/ff69247e-f90f-495d-a846-0de5527f3849/$FileName"
 $destinationFolder = "C:\Temp"
-$fileName = "ExchangeSubscriptionEdition-KB5128895-x64-en.exe"
 $destinationPath = Join-Path -Path $destinationFolder -ChildPath $fileName
 
 if (-not (Test-Path -Path $destinationFolder)) {

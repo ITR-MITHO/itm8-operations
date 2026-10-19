@@ -19,7 +19,7 @@ if (Test-Path $ExSetupPath) {
 }
 	}
 Write-Host "`n=== EXCHANGE VERSION ===" -ForegroundColor Cyan
-if ($ExchangeVer -NE $Version) {Write-Host "Version: $ExchangeVer - Update Missing" -ForegroundColor Red} else {Write-Host "Newest version: $ExchangeVer"}
+if ($ExchangeVer -NE $Version) {Write-Host "Current Version: $ExchangeVer - Update Missing" -ForegroundColor Red} else {Write-Host "Newest version: $ExchangeVer"}
 
 $s = Get-Service -Name "ir_agent" -ErrorAction SilentlyContinue; if ($s) 
     {

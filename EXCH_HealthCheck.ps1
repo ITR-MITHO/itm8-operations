@@ -11,6 +11,16 @@ if (-not (Get-Command Get-ExchangeServer -ErrorAction SilentlyContinue)) {
     Add-PSSnapin *Exchange* -ErrorAction SilentlyContinue
 }
 
+# --- VERSION ---
+$ExchangeVer = if ($env:ExchangeInstallPath) {
+$ExSetupPath = Join-Path $env:ExchangeInstallPath "bin\Exsetup.exe"
+if (Test-Path $ExSetupPath) {
+(Get-Item $ExSetupPath).VersionInfo.FileVersion
+}
+	}
+Write-Host "`n=== EXCHANGE VERSION ===" -ForegroundColor Cyan
+if ($ExchangeVer -NE "15.02.2562.056") {Write-Host "Update is required" -ForegroundColor Red} else {Write-Host "Newest version: $ExchangeVer"}
+
 $s = Get-Service -Name "ir_agent" -ErrorAction SilentlyContinue; if ($s) 
     {
 Set-Service -Name $s.Name -StartupType Automatic; if ($s.Status -ne 'Running') 

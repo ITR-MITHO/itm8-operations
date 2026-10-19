@@ -6,7 +6,7 @@
 .NOTES
     Must be executed from an elevated Exchange Management Shell session.
 #>
-
+$Version = "15.02.2562.056"
 if (-not (Get-Command Get-ExchangeServer -ErrorAction SilentlyContinue)) {
     Add-PSSnapin *Exchange* -ErrorAction SilentlyContinue
 }
@@ -19,7 +19,7 @@ if (Test-Path $ExSetupPath) {
 }
 	}
 Write-Host "`n=== EXCHANGE VERSION ===" -ForegroundColor Cyan
-if ($ExchangeVer -NE "15.02.2562.056") {Write-Host "Update is required" -ForegroundColor Red} else {Write-Host "Newest version: $ExchangeVer"}
+if ($ExchangeVer -NE $Version) {Write-Host "Version: $ExchangeVer - Update Missing" -ForegroundColor Red} else {Write-Host "Newest version: $ExchangeVer"}
 
 $s = Get-Service -Name "ir_agent" -ErrorAction SilentlyContinue; if ($s) 
     {
